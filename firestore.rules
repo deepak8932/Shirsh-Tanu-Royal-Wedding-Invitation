@@ -1,0 +1,107 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email == 'kdeepakrajak@gmail.com' && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isValidWish(data) {
+      return data.keys().hasAll(['name', 'relation', 'text', 'avatar', 'likes', 'createdAt'])
+        && data.keys().hasOnly(['name', 'relation', 'text', 'avatar', 'likes', 'createdAt'])
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.relation is string && data.relation.size() >= 1 && data.relation.size() <= 50
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 500
+        && data.avatar is string && data.avatar.size() >= 1 && data.avatar.size() <= 4
+        && data.likes is int && data.likes >= 0 && data.likes <= 1000000
+        && data.createdAt is timestamp;
+    }
+
+    function isValidQuizReply(data) {
+      return data.keys().hasAll(['name', 'scoreText', 'reply', 'avatar', 'likes', 'createdAt'])
+        && data.keys().hasOnly(['name', 'scoreText', 'reply', 'avatar', 'likes', 'createdAt'])
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.scoreText is string && data.scoreText.size() >= 1 && data.scoreText.size() <= 40
+        && data.reply is string && data.reply.size() >= 1 && data.reply.size() <= 400
+        && data.avatar is string && data.avatar.size() >= 1 && data.avatar.size() <= 4
+        && data.likes is int && data.likes >= 0 && data.likes <= 1000000
+        && data.createdAt is timestamp;
+    }
+
+    // Public shared guestbook wishes wall
+    match /wishes/{wishId} {
+      allow get: if isValidId(wishId);
+      allow list: if true;
+      allow create: if isValidId(wishId)
+        && isValidWish(incoming())
+        && incoming().likes == 0
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(wishId)
+        && isValidWish(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['likes'])
+        && incoming().name == existing().name
+        && incoming().relation == existing().relation
+        && incoming().text == existing().text
+        && incoming().avatar == existing().avatar
+        && incoming().createdAt == existing().createdAt
+        && (
+          (!('likes' in existing()) && incoming().likes == 1) ||
+          ('likes' in existing() && existing().likes is int && incoming().likes == existing().likes + 1)
+        );
+      allow delete: if isValidId(wishId) && isAdmin();
+    }
+
+    // Public shared couple quiz replies & likes wall
+    match /quiz_replies/{replyId} {
+      allow get: if isValidId(replyId);
+      allow list: if true;
+      allow create: if isValidId(replyId)
+        && isValidQuizReply(incoming())
+        && incoming().likes == 0
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(replyId)
+        && isValidQuizReply(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['likes'])
+        && incoming().name == existing().name
+        && incoming().scoreText == existing().scoreText
+        && incoming().reply == existing().reply
+        && incoming().avatar == existing().avatar
+        && incoming().createdAt == existing().createdAt
+        && (
+          (!('likes' in existing()) && incoming().likes == 1) ||
+          ('likes' in existing() && existing().likes is int && incoming().likes == existing().likes + 1)
+        );
+      allow delete: if isValidId(replyId) && isAdmin();
+    }
+
+    // Admin registry (read-only self-check)
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && isSignedIn() && request.auth.uid == adminId;
+      allow list, write: if false;
+    }
+  }
+}
